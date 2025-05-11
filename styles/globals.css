@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background-light text-text-light dark:bg-background-dark dark:text-text-dark;
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer components {
+  .container {
+    @apply max-w-3xl mx-auto px-4 py-6;
+  }
+
+  .news-card {
+    @apply bg-card-light dark:bg-card-dark rounded-lg p-5 mb-5 shadow-md;
+    @apply border-l-4 border-primary-light dark:border-primary-dark;
+    @apply hover:shadow-lg transition-all duration-200 hover:-translate-y-1;
+  }
+
+  .news-title {
+    @apply text-lg font-semibold mb-2 hover:text-primary-light dark:hover:text-primary-dark;
+    @apply transition-colors duration-200;
+  }
+
+  .news-meta {
+    @apply text-gray-500 dark:text-gray-400 text-sm;
+  }
+
+  .btn-primary {
+    @apply bg-primary-light dark:bg-primary-dark text-white px-4 py-2 rounded;
+    @apply hover:opacity-90 transition-opacity;
+  }
+}
