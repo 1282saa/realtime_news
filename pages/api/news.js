@@ -1,142 +1,100 @@
-import { kv } from "@vercel/kv";
-import { getNewsFromCache } from "./local-news";
+// pages/api/news.js 파일을 다음과 같이 변경
+import Parser from "rss-parser";
 
-// 로컬 환경 감지
-const isLocal = process.env.NODE_ENV === "development";
+// RSS 파서 인스턴스 생성
+const parser = new Parser({
+  headers: {
+    Accept: "application/rss+xml, application/xml, text/xml; q=0.9, */*; q=0.8",
+    "User-Agent": "Next-RSS-Reader/1.0",
+  },
+  customFields: {
+    item: [
+      ["pubDate", "pubDate"],
+      ["link", "link"],
+    ],
+  },
+  defaultRSS: 2.0,
+});
 
-// 초기 데이터 로드
-import { initialNewsItems } from "../../utils/initialData";
-
-// KV 스토어 초기화 함수
-async function initializeStore() {
-  const count = await kv.get("news:count");
-
-  // 초기 데이터가 없으면 샘플 데이터 추가
-  if (!count || count === 0) {
-    for (const item of initialNewsItems) {
-      const timestamp = new Date(item.pubDate).getTime();
-      const id = `news:${timestamp}`;
-      await kv.set(id, item);
-    }
-    await kv.set("news:count", initialNewsItems.length);
-  }
-}
+// 서울경제 RSS URL
+const RSS_URL = "https://www.sedaily.com/rss/newsall";
 
 export default async function handler(req, res) {
   try {
-    // 로컬 환경에서는 다른 API에서 뉴스 데이터 가져오기
-    if (isLocal) {
-      // GET 요청 처리 (뉴스 목록 조회)
-      if (req.method === "GET") {
-        // 로컬 캐시에서 뉴스 가져오기
-        const newsItems = getNewsFromCache();
+    console.log("RSS 피드 가져오기 시작...");
 
-        // 만약 캐시가 비어있다면 local-news API 호출
-        if (!newsItems || newsItems.length === 0) {
-          try {
-            // 내부 API 호출
-            const response = await fetch(
-              `${
-                process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000"
-              }/api/local-news`
-            );
-            if (!response.ok) {
-              throw new Error(
-                `로컬 뉴스 API 요청 실패: ${response.statusText}`
-              );
-            }
-            const data = await response.json();
-            return res.status(200).json({ news: data.news || [] });
-          } catch (error) {
-            console.error("로컬 뉴스 가져오기 오류:", error);
-            return res.status(200).json({ news: [] });
-          }
+    // 직접 fetch로 XML 데이터 가져오기
+    const response = await fetch(RSS_URL, {
+      headers: {
+        Accept:
+          "application/rss+xml, application/xml, text/xml; q=0.9, */*; q=0.8",
+        "User-Agent": "Next-RSS-Reader/1.0",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`RSS 피드 요청 실패: ${response.statusText}`);
+    }
+
+    const xmlText = await response.text();
+    console.log(`XML 데이터 받음`);
+
+    // RSS 피드 파싱
+    const feed = await parser.parseString(xmlText);
+    console.log(`총 ${feed.items?.length || 0}개의 뉴스 항목을 발견했습니다.`);
+
+    if (!feed.items || feed.items.length === 0) {
+      console.error("항목이 없거나 파싱 실패");
+      return res.status(404).json({ error: "뉴스 항목을 찾을 수 없습니다." });
+    }
+
+    // 파싱된 뉴스 배열 초기화
+    const parsedNews = [];
+
+    // 각 뉴스 항목 처리
+    for (const item of feed.items) {
+      try {
+        // 제목에서 CDATA 태그 제거
+        const titleRaw = item.title || "";
+        const title = titleRaw.replace(/<!\[CDATA\[(.*?)\]\]>/g, "$1").trim();
+        if (!title) continue;
+
+        // 링크 처리
+        const link = item.link || "";
+
+        // pubDate 파싱 및 ISO 형식으로 변환
+        let pubDate;
+        try {
+          pubDate = new Date(item.pubDate || new Date()).toISOString();
+        } catch (dateError) {
+          pubDate = new Date().toISOString();
         }
 
-        return res.status(200).json({ news: newsItems });
-      }
+        // 기자 이름 (기본값)
+        const author = "서울경제";
 
-      // POST 요청 처리 (로컬 환경에서는 의미 없음)
-      if (req.method === "POST") {
-        return res.status(200).json({
-          success: true,
-          message: "로컬 환경에서는 POST 요청이 저장되지 않습니다.",
-        });
-      }
-    } else {
-      // Vercel 환경에서는 기존 KV 로직 사용
-      // GET 요청 처리 (뉴스 목록 조회)
-      if (req.method === "GET") {
-        const keys = await kv.keys("news:*");
-        // news:count 키는 제외
-        const newsKeys = keys.filter((key) => key !== "news:count");
+        // 뉴스 항목 생성
+        const newsItem = {
+          title,
+          author,
+          pubDate,
+          link,
+          source: "서울경제",
+          fetchedAt: new Date().toISOString(),
+        };
 
-        // 모든 뉴스 데이터 가져오기
-        const newsItems = [];
-        for (const key of newsKeys) {
-          const news = await kv.get(key);
-          if (news) {
-            newsItems.push(news);
-          }
-        }
-
-        // 최신순 정렬
-        newsItems.sort(
-          (a, b) =>
-            new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
-        );
-
-        return res.status(200).json({ news: newsItems });
-      }
-
-      // POST 요청 처리 (새 뉴스 추가)
-      if (req.method === "POST") {
-        const newsItem = req.body;
-
-        // 필수 필드 검증
-        if (
-          !newsItem ||
-          !newsItem.title ||
-          !newsItem.author ||
-          !newsItem.pubDate ||
-          !newsItem.link
-        ) {
-          return res.status(400).json({ error: "필수 필드가 누락되었습니다." });
-        }
-
-        // 중복 체크를 위한 기존 데이터 조회
-        const keys = await kv.keys("news:*");
-        const newsKeys = keys.filter((key) => key !== "news:count");
-
-        for (const key of newsKeys) {
-          const existingNews = await kv.get(key);
-          if (
-            existingNews &&
-            existingNews.title === newsItem.title &&
-            existingNews.link === newsItem.link
-          ) {
-            return res.status(409).json({ error: "이미 존재하는 뉴스입니다." });
-          }
-        }
-
-        // 새 뉴스 저장
-        const timestamp = new Date(newsItem.pubDate).getTime();
-        const id = `news:${timestamp}`;
-        await kv.set(id, newsItem);
-
-        // 카운트 증가
-        const count = (await kv.get("news:count")) || 0;
-        await kv.set("news:count", Number(count) + 1);
-
-        return res.status(201).json({ success: true, news: newsItem });
+        parsedNews.push(newsItem);
+      } catch (itemError) {
+        console.error("항목 처리 중 오류:", itemError.message);
       }
     }
 
-    // 지원하지 않는 HTTP 메소드
-    res.setHeader("Allow", ["GET", "POST"]);
-    return res.status(405).end(`Method ${req.method} Not Allowed`);
+    // 뉴스 항목 시간순 정렬 (최신순)
+    parsedNews.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+
+    return res.status(200).json({ news: parsedNews });
   } catch (error) {
-    console.error("API Error:", error);
-    return res.status(500).json({ error: "서버 오류가 발생했습니다." });
+    console.error("RSS 피드 처리 중 오류:", error.message);
+    return res.status(500).json({ error: error.message });
   }
 }
