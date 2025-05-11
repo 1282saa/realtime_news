@@ -1,4 +1,3 @@
-import { kv } from "@vercel/kv";
 import { format } from "date-fns";
 
 export default async function handler(req, res) {
@@ -8,23 +7,20 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 뉴스 데이터 가져오기
-    const keys = await kv.keys("news:*");
-    const newsKeys = keys.filter((key) => key !== "news:count");
+    // RSS 데이터 직접 가져오기
+    const apiUrl = `${
+      process.env.NEXT_PUBLIC_BASE_URL ||
+      process.env.VERCEL_URL ||
+      "http://localhost:3000"
+    }/api/news`;
+    const response = await fetch(apiUrl);
 
-    // 모든 뉴스 데이터 가져오기
-    const newsItems = [];
-    for (const key of newsKeys) {
-      const news = await kv.get(key);
-      if (news) {
-        newsItems.push(news);
-      }
+    if (!response.ok) {
+      throw new Error("뉴스 데이터를 가져오는데 실패했습니다.");
     }
 
-    // 최신순 정렬
-    newsItems.sort(
-      (a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime()
-    );
+    const data = await response.json();
+    const newsItems = data.news || [];
 
     if (newsItems.length === 0) {
       return res.status(404).json({ error: "저장할 뉴스가 없습니다." });
